@@ -257,9 +257,73 @@ async def get_card_benefits(request: CardBenefitsRequest) -> CardBenefitsRespons
 
 # Register MCP tool
 @mcp.tool()
-async def get_card_benefits_tool(request: CardBenefitsRequest) -> CardBenefitsResponse:
-    """MCP tool for getting card benefits."""
-    return await get_card_benefits(request)
+async def get_card_benefits(card_ids: List[str]) -> Dict[str, Any]:
+    """
+    Retrieve benefits for specified credit cards.
+    
+    Args:
+        card_ids: List of card identifiers to get benefits for (e.g., ['freedom', 'sapphire'])
+    
+    Returns:
+        Dict containing:
+        - benefits: List of card benefits with details
+        - request_id: Unique identifier for the request
+        - timestamp: Request timestamp
+    
+    Example request:
+        {
+            "card_ids": ["freedom", "sapphire"]
+        }
+    """
+    request_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    logger.info(f"[{request_id}] Retrieving benefits for cards: {card_ids}")
+    
+    try:
+        if not card_ids:
+            raise CardBenefitsError(
+                "No card IDs provided",
+                "MISSING_CARD_IDS",
+                {"required": "At least one card ID must be provided"}
+            )
+            
+        benefits = []
+        for card_id in card_ids:
+            if card_id in MOCK_CARD_BENEFITS:
+                benefits.append(MOCK_CARD_BENEFITS[card_id])
+            else:
+                logger.warning(f"[{request_id}] Card not found: {card_id}")
+                
+        response = {
+            "benefits": benefits,
+            "request_id": request_id,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        logger.info(f"[{request_id}] Successfully retrieved benefits for {len(benefits)} cards")
+        return response
+        
+    except CardBenefitsError as e:
+        logger.error(f"[{request_id}] Card benefits error: {str(e)}", exc_info=True)
+        raise CardBenefitsError(
+            e.message,
+            e.error_code,
+            {
+                **e.details,
+                "request_id": request_id,
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+    except Exception as e:
+        logger.error(f"[{request_id}] Unexpected error: {str(e)}", exc_info=True)
+        raise CardBenefitsError(
+            "An unexpected error occurred while processing the request",
+            "INTERNAL_ERROR",
+            {
+                "request_id": request_id,
+                "timestamp": datetime.now().isoformat(),
+                "error": str(e)
+            }
+        )
 
 if __name__ == "__main__":
     logger.info("Starting Benefits MCP server")
