@@ -2,6 +2,8 @@ import logging
 from typing import List, Dict, Any
 import sys
 from pathlib import Path
+import json
+from datetime import datetime
 
 # Add the parent directory to Python path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -139,6 +141,14 @@ MOCK_CARD_BENEFITS = {
 # Initialize FastMCP server
 mcp = FastMCP("Benefits")
 
+class CardBenefitsError(Exception):
+    """Custom exception for card benefits errors."""
+    def __init__(self, message: str, error_code: str, details: Dict[str, Any] = None):
+        self.message = message
+        self.error_code = error_code
+        self.details = details or {}
+        super().__init__(self.message)
+
 def get_card_benefits_internal(card_ids: List[str]) -> List[Dict[str, Any]]:
     """
     Get benefits for specified cards.
@@ -150,13 +160,38 @@ def get_card_benefits_internal(card_ids: List[str]) -> List[Dict[str, Any]]:
         List[Dict[str, Any]]: List of card benefits
         
     Raises:
-        ValueError: If any card_id is not found
+        CardBenefitsError: If any card_id is not found or other errors occur
     """
+    logger.info(f"Processing request for card IDs: {card_ids}")
+    
+    if not card_ids:
+        raise CardBenefitsError(
+            "No card IDs provided",
+            "MISSING_CARD_IDS",
+            {"required": "At least one card ID must be provided"}
+        )
+    
     benefits = []
+    invalid_cards = []
+    
     for card_id in card_ids:
         if card_id not in MOCK_CARD_BENEFITS:
-            raise ValueError(f"Card {card_id} not found")
-        benefits.append(MOCK_CARD_BENEFITS[card_id])
+            invalid_cards.append(card_id)
+            logger.warning(f"Card ID not found: {card_id}")
+        else:
+            benefits.append(MOCK_CARD_BENEFITS[card_id])
+            logger.info(f"Found benefits for card: {card_id}")
+    
+    if invalid_cards:
+        raise CardBenefitsError(
+            f"Invalid card IDs: {', '.join(invalid_cards)}",
+            "INVALID_CARD_IDS",
+            {
+                "invalid_cards": invalid_cards,
+                "valid_cards": list(MOCK_CARD_BENEFITS.keys())
+            }
+        )
+    
     return benefits
 
 async def get_card_benefits(request: CardBenefitsRequest) -> CardBenefitsResponse:
@@ -169,7 +204,8 @@ async def get_card_benefits(request: CardBenefitsRequest) -> CardBenefitsRespons
     Returns:
         CardBenefitsResponse: The card benefits response
     """
-    logger.info(f"Getting benefits for cards: {request.card_ids}")
+    request_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    logger.info(f"[{request_id}] Received request for card benefits: {request.card_ids}")
     
     try:
         benefits = get_card_benefits_internal(request.card_ids)
@@ -193,15 +229,31 @@ async def get_card_benefits(request: CardBenefitsRequest) -> CardBenefitsRespons
         ]
         
         response = CardBenefitsResponse(cards=response_cards)
-        logger.info(f"Found benefits for {len(response_cards)} cards")
+        logger.info(f"[{request_id}] Successfully processed request. Found benefits for {len(response_cards)} cards")
         return response
         
-    except ValueError as e:
-        logger.error(f"Error getting card benefits: {str(e)}")
-        return CardBenefitsResponse(cards=[])
+    except CardBenefitsError as e:
+        logger.error(f"[{request_id}] Card benefits error: {str(e)}", exc_info=True)
+        raise CardBenefitsError(
+            e.message,
+            e.error_code,
+            {
+                **e.details,
+                "request_id": request_id,
+                "timestamp": datetime.now().isoformat()
+            }
+        )
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
-        return CardBenefitsResponse(cards=[])
+        logger.error(f"[{request_id}] Unexpected error: {str(e)}", exc_info=True)
+        raise CardBenefitsError(
+            "An unexpected error occurred while processing the request",
+            "INTERNAL_ERROR",
+            {
+                "request_id": request_id,
+                "timestamp": datetime.now().isoformat(),
+                "error": str(e)
+            }
+        )
 
 # Register MCP tool
 @mcp.tool()
